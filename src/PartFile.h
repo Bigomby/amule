@@ -289,6 +289,12 @@ public:
 
 	uint32 GetBufferedDataSize() const  { return m_nTotalBufferData; }
 	size_t GetBufferedDataCount() const { return m_BufferedData_list.size(); }
+	size_t GetDirtyPartCount() const {
+		size_t n = 0;
+		for (auto v : m_aChangedPart) if (v) ++n;
+		return n;
+	}
+	int32  GetPendingHashes() const { return m_pendingHashes.load(std::memory_order_relaxed); }
 
 	/**
 	 * Adds a source to the list of dead sources.

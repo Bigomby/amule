@@ -95,6 +95,12 @@ public:
 	void IncDownloadThrottlerRefunds()               { m_downloadRefunds.fetch_add(1, std::memory_order_relaxed); }
 	void IncDownloadThrottlerStarvations()           { m_downloadStarvations.fetch_add(1, std::memory_order_relaxed); }
 
+	// Hash-quiescent skip counter — incremented every time FlushBuffer
+	// Phase 3 declines to enqueue dirty parts because the file is still
+	// receiving blocks.  If this is large while pending dirty parts is
+	// also large, the hash thread is starved by a continuous download.
+	void IncHashSkipQuiescent()                      { m_hashSkipQuiescent.fetch_add(1, std::memory_order_relaxed); }
+
 	// --- histogram observers (fixed buckets) ---
 	// Time buckets: 0.001 0.005 0.01 0.05 0.1 0.5 1 5 10 30 (s)
 	void ObserveFlushBufferDuration(double seconds)    { Observe(m_hFlush,         seconds); }
@@ -201,6 +207,7 @@ private:
 	std::atomic<int64_t>  m_downloadBucket{0};
 	std::atomic<uint64_t> m_downloadRefunds{0};
 	std::atomic<uint64_t> m_downloadStarvations{0};
+	std::atomic<uint64_t> m_hashSkipQuiescent{0};
 
 	Histogram m_hFlush;
 	Histogram m_hOnRecv;

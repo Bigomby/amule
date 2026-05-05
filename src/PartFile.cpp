@@ -3230,6 +3230,7 @@ void CPartFile::FlushBuffer(bool fromAICHRecoveryDataAvailable)
 		const uint32 nowTick = GetTickCount();
 		if (m_nLastBlockReceivedTick != 0 &&
 			(nowTick - m_nLastBlockReceivedTick) < kHashQuiescentMs) {
+			g_PromMetrics.IncHashSkipQuiescent();
 			return;
 		}
 
@@ -3352,6 +3353,8 @@ void CPartFile::OnAsyncHashComplete(uint16 partNumber, bool ok,
 
 	if (IsComplete(partNumber)) {
 		if (!ok) {
+			g_PromMetrics.IncAichVerifyFail();
+			g_PromMetrics.IncCorruptedBlocks();
 			AddLogLineC(CFormat(
 				_("Downloaded part %i is corrupt in file: %s") )
 				% partNumber % GetFileName());
@@ -3362,11 +3365,13 @@ void CPartFile::OnAsyncHashComplete(uint16 partNumber, bool ok,
 			// request AICH recovery data; skip if we're already inside
 			// an AICH recovery to avoid infinite recursion.
 			if (!fromAICHRecoveryDataAvailable) {
+				g_PromMetrics.IncAichRecovery();
 				RequestAICHRecovery(partNumber);
 			}
 			m_iLostDueToCorruption += (partRange + 1);
 			stateChanged = true;
 		} else {
+			g_PromMetrics.IncAichVerifyOk();
 			if (!m_hashsetneeded) {
 				AddDebugLogLineN(logPartFile, CFormat(
 					"Finished part %u of '%s'") % partNumber % GetFileName());

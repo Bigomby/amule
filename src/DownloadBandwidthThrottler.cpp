@@ -10,6 +10,7 @@
 //
 
 #include "DownloadBandwidthThrottler.h"
+#include "PromMetrics.h"
 
 #include <climits>
 
@@ -57,6 +58,7 @@ void CDownloadBandwidthThrottler::RefillBudget(uint32 maxDownloadKBps, uint32 ti
 		newBudget = cap;
 	}
 	m_bytesAvailable.store(newBudget, std::memory_order_release);
+	g_PromMetrics.SetDownloadBucketBytes(newBudget);
 }
 
 
@@ -80,6 +82,7 @@ uint32 CDownloadBandwidthThrottler::Reserve(uint32 wantBytes)
 		}
 		// CAS failed; `current` was reloaded with the latest value.
 	}
+	g_PromMetrics.IncDownloadThrottlerStarvations();
 	return 0;
 }
 
@@ -90,4 +93,5 @@ void CDownloadBandwidthThrottler::Refund(uint32 bytes)
 		return;
 	}
 	m_bytesAvailable.fetch_add((int64_t)bytes, std::memory_order_acq_rel);
+	g_PromMetrics.IncDownloadThrottlerRefunds();
 }

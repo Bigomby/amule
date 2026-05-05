@@ -453,6 +453,11 @@ void CPromMetrics::RenderHasherCounters(wxString& out) {
 	out << CFormat(wxT("amule_hash_tasks_active %llu\n"))
 		% (unsigned long long)m_activeHashTasks.load(std::memory_order_relaxed);
 
+	out << wxT("# HELP amule_hash_skip_quiescent_total FlushBuffer Phase 3 returns where dirty parts existed but the file is still receiving (quiescent guard).\n");
+	out << wxT("# TYPE amule_hash_skip_quiescent_total counter\n");
+	out << CFormat(wxT("amule_hash_skip_quiescent_total %llu\n"))
+		% (unsigned long long)m_hashSkipQuiescent.load(std::memory_order_relaxed);
+
 	const uint64_t started   = m_hashStarted.load(std::memory_order_relaxed);
 	const uint64_t completed = m_hashCompleted.load(std::memory_order_relaxed);
 	const uint64_t failed    = m_hashFailed.load(std::memory_order_relaxed);
@@ -501,6 +506,10 @@ void CPromMetrics::RenderTransferGauges(wxString& out) {
 		out << wxT("# TYPE amule_buffered_data_bytes gauge\n");
 		out << wxT("# HELP amule_buffered_data_items List item count of CPartFile::m_BufferedData_list.\n");
 		out << wxT("# TYPE amule_buffered_data_items gauge\n");
+		out << wxT("# HELP amule_dirty_parts Parts with writes flushed but not yet hashed (m_aChangedPart).\n");
+		out << wxT("# TYPE amule_dirty_parts gauge\n");
+		out << wxT("# HELP amule_pending_hashes Hash jobs queued to CPartFileHashThread, not yet completed.\n");
+		out << wxT("# TYPE amule_pending_hashes gauge\n");
 
 		for (auto pf : files) {
 			if (!pf) continue;
@@ -509,6 +518,10 @@ void CPromMetrics::RenderTransferGauges(wxString& out) {
 				% hash % (unsigned)pf->GetBufferedDataSize();
 			out << CFormat(wxT("amule_buffered_data_items{file_hash=\"%s\"} %u\n"))
 				% hash % (unsigned)pf->GetBufferedDataCount();
+			out << CFormat(wxT("amule_dirty_parts{file_hash=\"%s\"} %u\n"))
+				% hash % (unsigned)pf->GetDirtyPartCount();
+			out << CFormat(wxT("amule_pending_hashes{file_hash=\"%s\"} %d\n"))
+				% hash % (int)pf->GetPendingHashes();
 			if (pf->GetTransferingSrcCount() > 0) ++activeDownloads;
 			activeSources += pf->GetSourceCount();
 		}

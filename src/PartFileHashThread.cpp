@@ -127,6 +127,8 @@ void* CPartFileHashThread::Entry()
 			 it != workList.end() && m_bRun; ++it)
 		{
 			const uint32 startTick = GetTickCountFullRes();
+			g_PromMetrics.IncHashTaskStarted();
+			g_PromMetrics.IncActiveHashTasks();
 
 			// CPartFile::m_pendingHashes was incremented before enqueue
 			// and is the gate that ~CPartFile waits on, so the file
@@ -146,6 +148,10 @@ void* CPartFileHashThread::Entry()
 				StdMutexLockTimer lock("partfile_hpartfile", it->pFile->m_hpartfileMutex);
 				ok = it->pFile->HashSinglePart(it->partNumber);
 			}
+			g_PromMetrics.AddHashedBytes(PARTSIZE);
+			g_PromMetrics.DecActiveHashTasks();
+			if (ok) g_PromMetrics.IncHashTaskCompleted();
+			else    g_PromMetrics.IncHashTaskFailed();
 
 			const uint32 elapsedMs = GetTickCountFullRes() - startTick;
 
