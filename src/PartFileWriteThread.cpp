@@ -29,6 +29,8 @@
 #include "CFile.h"			// Needed for CIOFailureException
 #include "Logger.h"
 #include <common/Format.h>	// Needed for CFormat
+#include "PromMetrics.h"
+#include <chrono>
 
 // eMule ref: CPartFileWriteThread::CPartFileWriteThread() — line 41
 CPartFileWriteThread::CPartFileWriteThread()
@@ -38,7 +40,7 @@ CPartFileWriteThread::CPartFileWriteThread()
 	m_bRun = false;
 	m_bWorkPending = false;
 
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("partfile_write_thread", m_mutex);
 	if (Create() == wxTHREAD_NO_ERROR) {
 		Run();
 	}
@@ -55,7 +57,7 @@ CPartFileWriteThread::~CPartFileWriteThread()
 void CPartFileWriteThread::EndThread()
 {
 	{
-		wxMutexLocker lock(m_mutex);
+		MutexLockTimer lock("partfile_write_thread", m_mutex);
 		m_bRun = false;
 		m_bWorkPending = true;
 		m_condition.Signal();
@@ -68,7 +70,7 @@ void CPartFileWriteThread::EndThread()
 // Called by the main thread to queue a write item.
 void CPartFileWriteThread::QueueWrite(CPartFile* pFile, PartFileBufferedData* pBuffer)
 {
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("partfile_write_thread", m_mutex);
 	m_flushList.push_back(ToWrite{ pFile, pBuffer });
 	m_bWorkPending = true;
 	m_condition.Signal();
@@ -85,18 +87,29 @@ void* CPartFileWriteThread::Entry()
 
 	while (m_bRun)
 	{
+		using clk = std::chrono::steady_clock;
 		// Move queued items to a local work list under the lock.
 		// This minimises lock hold time — main thread can keep queueing
 		// while we process the local list.
 		std::list<ToWrite> workList;
+		uint64_t idleMicros = 0;
 		{
-			wxMutexLocker lock(m_mutex);
+			MutexLockTimer lock("partfile_write_thread", m_mutex);
 			if (m_bRun && !m_bWorkPending) {
+				const auto t0 = clk::now();
 				m_condition.WaitTimeout(500);
+				idleMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+					clk::now() - t0).count();
 			}
 			m_bWorkPending = false;
 			workList.swap(m_flushList);
+			g_PromMetrics.SetThreadQueueDepth(CPromMetrics::kThreadWrite, m_flushList.size());
 		}
+		g_PromMetrics.IncThreadIteration(CPromMetrics::kThreadWrite);
+		if (idleMicros > 0) {
+			g_PromMetrics.AddThreadIdleMicros(CPromMetrics::kThreadWrite, idleMicros);
+		}
+		const auto tBusy0 = clk::now();
 
 		// Process all queued writes synchronously.
 		// eMule ref: WriteBuffers() — line 122
@@ -127,7 +140,7 @@ void* CPartFileWriteThread::Entry()
 			// the file if disk is genuinely exhausted).
 			bool writeOk = true;
 			try {
-				std::lock_guard<std::mutex> lock(it->pFile->m_hpartfileMutex);
+				StdMutexLockTimer lock("partfile_hpartfile", it->pFile->m_hpartfileMutex);
 				pBuffer->area.FlushAt(it->pFile->m_hpartfile, pBuffer->start, lenData);
 			} catch (const CIOFailureException& e) {
 				AddDebugLogLineC(logPartFile, CFormat(
@@ -148,6 +161,9 @@ void* CPartFileWriteThread::Entry()
 			// eMule ref: WriteCompletionRoutine — line 182
 			pBuffer->flushed = writeOk ? PB_WRITTEN : PB_ERROR;
 		}
+		const uint64_t busyMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+			clk::now() - tBusy0).count();
+		g_PromMetrics.AddThreadBusyMicros(CPromMetrics::kThreadWrite, busyMicros);
 	}
 
 	return NULL;

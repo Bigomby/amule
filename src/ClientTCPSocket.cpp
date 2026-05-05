@@ -52,6 +52,7 @@
 #include "IPFilter.h"		// Needed for CIPFilter
 #include "ListenSocket.h"	// Needed for CListenSocket
 #include "GuiEvents.h"		// Needed for Notify_*
+#include "PromMetrics.h"
 
 
 //#define __PACKET_RECV_DUMP__
@@ -304,6 +305,8 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 	//printf("Rec: OPCODE %x \n",opcode);
 	DumpMem(buffer, size);
 	#endif
+	g_PromMetrics.IncPacketReceived(opcode);
+
 	if (!m_client && opcode != OP_HELLO) {
 		throw wxString("Asks for something without saying hello");
 	} else if (m_client && opcode != OP_HELLO && opcode != OP_HELLOANSWER) {

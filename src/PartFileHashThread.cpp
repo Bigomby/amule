@@ -31,6 +31,8 @@
 #include "GetTickCount.h"		// Needed for GetTickCountFullRes
 #include "Logger.h"
 #include "PartFile.h"
+#include "PromMetrics.h"
+#include <chrono>
 
 
 // Custom event registration
@@ -44,7 +46,7 @@ CPartFileHashThread::CPartFileHashThread()
 	m_bRun = false;
 	m_bWorkPending = false;
 
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("partfile_hash_thread", m_mutex);
 	if (Create() == wxTHREAD_NO_ERROR) {
 		Run();
 	}
@@ -60,7 +62,7 @@ CPartFileHashThread::~CPartFileHashThread()
 void CPartFileHashThread::EndThread()
 {
 	{
-		wxMutexLocker lock(m_mutex);
+		MutexLockTimer lock("partfile_hash_thread", m_mutex);
 		m_bRun = false;
 		m_bWorkPending = true;
 		m_condition.Signal();
@@ -78,7 +80,7 @@ void CPartFileHashThread::QueueHashCheck(CPartFile* pFile, uint16 partNumber,
 	job.fileHash = pFile->GetFileHash();
 	job.fromAICHRecoveryDataAvailable = fromAICHRecoveryDataAvailable;
 
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("partfile_hash_thread", m_mutex);
 	m_jobList.push_back(job);
 	m_bWorkPending = true;
 	m_condition.Signal();
@@ -101,14 +103,25 @@ void* CPartFileHashThread::Entry()
 		// Mirrors CPartFileWriteThread's pattern: minimise lock hold
 		// time so the main thread can keep enqueueing.
 		std::list<HashJob> workList;
+		using clk = std::chrono::steady_clock;
+		uint64_t idleMicros = 0;
 		{
-			wxMutexLocker lock(m_mutex);
+			MutexLockTimer lock("partfile_hash_thread", m_mutex);
 			if (m_bRun && !m_bWorkPending) {
+				const auto t0 = clk::now();
 				m_condition.WaitTimeout(500);
+				idleMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+					clk::now() - t0).count();
 			}
 			m_bWorkPending = false;
 			workList.swap(m_jobList);
+			g_PromMetrics.SetThreadQueueDepth(CPromMetrics::kThreadHash, m_jobList.size());
 		}
+		g_PromMetrics.IncThreadIteration(CPromMetrics::kThreadHash);
+		if (idleMicros > 0) {
+			g_PromMetrics.AddThreadIdleMicros(CPromMetrics::kThreadHash, idleMicros);
+		}
+		const auto tBusy0 = clk::now();
 
 		for (std::list<HashJob>::iterator it = workList.begin();
 			 it != workList.end() && m_bRun; ++it)
@@ -130,7 +143,7 @@ void* CPartFileHashThread::Entry()
 			// resume mid-drain). See CPartFile::m_hpartfileMutex.
 			bool ok;
 			{
-				std::lock_guard<std::mutex> lock(it->pFile->m_hpartfileMutex);
+				StdMutexLockTimer lock("partfile_hpartfile", it->pFile->m_hpartfileMutex);
 				ok = it->pFile->HashSinglePart(it->partNumber);
 			}
 
@@ -155,6 +168,9 @@ void* CPartFileHashThread::Entry()
 			// includes the event-post step.
 			--it->pFile->m_pendingHashes;
 		}
+		const uint64_t busyMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+			clk::now() - tBusy0).count();
+		g_PromMetrics.AddThreadBusyMicros(CPromMetrics::kThreadHash, busyMicros);
 	}
 
 	AddDebugLogLineN(logPartFile, wxT("Hash thread: exiting"));

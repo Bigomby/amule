@@ -24,6 +24,7 @@
 //
 
 #include "updownclient.h"		// Needed for CUpDownClient
+#include "PromMetrics.h"		// ehinny fork: metrics hooks
 
 #include <protocol/Protocols.h>
 #include <protocol/ed2k/Client2Client/TCP.h>
@@ -345,6 +346,7 @@ void CUpDownClient::AddReqBlock(Requested_Block_Struct* reqblock, bool bSignalIO
 			std::list<Requested_Block_Struct*>::iterator it = m_DoneBlocks_list.begin();
 			for (; it != m_DoneBlocks_list.end(); ++it) {
 				if (reqblock->StartOffset == (*it)->StartOffset && reqblock->EndOffset == (*it)->EndOffset) {
+					g_PromMetrics.IncBlockReqDupDone();
 					delete reqblock;
 					return;
 				}
@@ -355,6 +357,7 @@ void CUpDownClient::AddReqBlock(Requested_Block_Struct* reqblock, bool bSignalIO
 			std::list<Requested_Block_Struct*>::iterator it = m_BlockRequests_queue.begin();
 			for (; it != m_BlockRequests_queue.end(); ++it) {
 				if (reqblock->StartOffset == (*it)->StartOffset && reqblock->EndOffset == (*it)->EndOffset) {
+					g_PromMetrics.IncBlockReqDupQueued();
 					delete reqblock;
 					return;
 				}
@@ -362,6 +365,7 @@ void CUpDownClient::AddReqBlock(Requested_Block_Struct* reqblock, bool bSignalIO
 		}
 
 		m_BlockRequests_queue.push_back(reqblock);
+		g_PromMetrics.IncBlockReqReceived();
 	}	// release lock before signalling to avoid contention
 
 	// Notify disk I/O thread that new block requests are available.

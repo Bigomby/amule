@@ -163,6 +163,8 @@ bool		CPreferences::s_msgsecure;
 uint8		CPreferences::s_filterlevel;
 uint8		CPreferences::s_iFileBufferSize;
 uint8		CPreferences::s_iQueueSize;
+// ehinny fork
+uint16		CPreferences::s_iPrometheusPort;
 wxString	CPreferences::s_datetimeformat;
 wxString	CPreferences::s_sWebPath;
 wxString	CPreferences::s_sWebPassword;
@@ -1093,6 +1095,8 @@ void CPreferences::BuildItemList( const wxString& appdir )
 	NewCfgItem(IDC_STARTNEXTFILE_ALPHA,	(new Cfg_Bool( "/eMule/StartNextFileAlpha", s_bstartnextfilealpha, false )));
 	NewCfgItem(IDC_SRCSEEDS,	(new Cfg_Bool( "/ExternalConnect/UseSrcSeeds", s_UseSrcSeeds, false )));
 	NewCfgItem(IDC_FILEBUFFERSIZE,	(MkCfg_Int( "/eMule/FileBufferSizePref", s_iFileBufferSize, 16 )));
+	// ehinny fork: Prometheus /metrics HTTP listener port (0 disables)
+	NewCfgItem(IDC_PROMETHEUS_PORT, (MkCfg_Int( "/eMule/PrometheusPort",  s_iPrometheusPort,  4713 )));
 	NewCfgItem(IDC_DAP,		(new Cfg_Bool( "/eMule/DAPPref", s_bDAP, true )));
 	NewCfgItem(IDC_UAP,		(new Cfg_Bool( "/eMule/UAPPref", s_bUAP, true )));
 	NewCfgItem(IDC_ALLOCFULLFILE,	(new Cfg_Bool( "/eMule/AllocateFullFile", s_allocFullFile, false )));

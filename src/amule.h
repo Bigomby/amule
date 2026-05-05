@@ -249,6 +249,9 @@ public:
 	// shakraw - new EC code using wxSocketBase
 	ExternalConn*	ECServerHandler;
 
+	// ehinny fork: Prometheus /metrics exporter (HTTP listener).
+	class CPromHttpServer* PromHttpHandler;
+
 	// return current (valid) public IP or 0 if unknown
 	// If ignorelocal is true, don't use m_localip
 	uint32	GetPublicIP(bool ignorelocal = false) const;

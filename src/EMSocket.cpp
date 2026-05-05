@@ -37,6 +37,7 @@
 #include "Logger.h"
 #include "Preferences.h"
 #include "ScopedPtr.h"
+#include "PromMetrics.h"
 
 
 const uint32 MAX_PACKET_SIZE = 2000000;
@@ -189,6 +190,9 @@ void CEMSocket::OnReceive(int nErrorCode)
 		byConnected = ES_CONNECTED; // ES_DISCONNECTED, ES_NOTCONNECTED, ES_CONNECTED
 	}
 
+	// ehinny fork: time the OnReceive callback + count bytes pulled.
+	ScopedHistTimer onRecvTimer(&CPromMetrics::ObserveOnReceiveDuration);
+	uint64_t totalRead = 0;
 	uint32 ret;
 	do {
 		uint32 readMax;
@@ -251,6 +255,8 @@ void CEMSocket::OnReceive(int nErrorCode)
 			CDownloadBandwidthThrottler::Get().Refund(grantedBytes - ret);
 		}
 
+		if (ret > 0) totalRead += (uint64_t)ret;
+
 		// CPU load improvement
 		// Detect if the socket's buffer is empty (or the size did match...)
 		pendingOnReceive = (ret == readMax);
@@ -284,6 +290,10 @@ void CEMSocket::OnReceive(int nErrorCode)
 			pendingHeaderSize += ret;
 		}
 	} while (ret && pendingHeaderSize >= PACKET_HEADER_SIZE);
+
+	if (totalRead > 0) {
+		g_PromMetrics.ObserveOnReceiveBytes((double)totalRead);
+	}
 }
 
 

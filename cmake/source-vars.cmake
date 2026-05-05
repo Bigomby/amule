@@ -43,6 +43,8 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 		PartFileWriteThread.cpp
 		PartFileHashThread.cpp
 		ThreadTasks.cpp
+		PromMetrics.cpp
+		PromHttpServer.cpp
 	)
 endif()
 

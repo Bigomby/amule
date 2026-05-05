@@ -296,6 +296,9 @@ wxSizer *PreferencesStatisticsTab( wxWindow *parent, bool call_fit = TRUE, bool 
 #define IDC_MAXCON5SEC 10191
 #define IDC_FILEBUFFERSIZE_STATIC 10192
 #define IDC_FILEBUFFERSIZE 10193
+// ehinny fork: Prometheus port (no GUI widget; defined here so
+// NewCfgItem compiles in both gui and daemon builds).
+#define IDC_PROMETHEUS_PORT 10401
 #define IDC_QUEUESIZE_STATIC 10194
 #define IDC_QUEUESIZE 10195
 #define IDC_SERVERKEEPALIVE_LABEL 10196

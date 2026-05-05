@@ -59,6 +59,7 @@
 #include "ListenSocket.h"
 #include "DownloadQueue.h"
 #include "PartFile.h"
+#include "PromMetrics.h"
 
 
 //TODO rewrite the whole networkcode, use overlapped sockets
@@ -224,6 +225,7 @@ void CUploadQueue::AddUpNextClient(CUpDownClient* directadd)
 		theApp->uploadBandwidthThrottler->AddToStandardList(m_uploadinglist.size(), newclient->GetSocket());
 		m_uploadinglist.push_back(CCLIENTREF(newclient, "CUploadQueue::AddUpNextClient"));
 	}
+	g_PromMetrics.IncSlotGrant();
 	m_allUploadingKnownFile->AddUploadingClient(newclient);
 	theStats::AddUploadingClient();
 
@@ -551,6 +553,7 @@ bool CUploadQueue::RemoveFromUploadQueue(CUpDownClient* client)
 	}
 
 	if (found) {
+		g_PromMetrics.IncSlotTermination();
 		m_allUploadingKnownFile->RemoveUploadingClient(client);
 		theStats::RemoveUploadingClient();
 		if( client->GetTransferredUp() ) {

@@ -24,6 +24,7 @@
 //
 
 #include "updownclient.h"		// Needed for CUpDownClient
+#include "PromMetrics.h"		// ehinny fork: metrics hooks
 
 #include <protocol/Protocols.h>
 #include <protocol/ed2k/Client2Client/TCP.h>
@@ -866,6 +867,7 @@ void CUpDownClient::ProcessBlockPacket(const uint8_t* packet, uint32 size, bool 
 
 	// Update stats
 	m_dwLastBlockReceived = ::GetTickCount();
+	g_PromMetrics.IncBytesReceived(size);
 
 	try {
 
@@ -1039,6 +1041,8 @@ void CUpDownClient::ProcessBlockPacket(const uint8_t* packet, uint32 size, bool 
 						m_lastaverage = ((cur_block->block->EndOffset - cur_block->block->StartOffset) * 1000) / average_time;
 
 						m_reqfile->RemoveBlockFromList(cur_block->block->StartOffset, cur_block->block->EndOffset);
+						g_PromMetrics.IncBlocksReceived();
+						g_PromMetrics.ObserveBlockCompleteDuration(average_time / 1000.0);
 						delete cur_block->block;
 						// Not always allocated
 						if (cur_block->zStream) {
@@ -1056,6 +1060,8 @@ void CUpDownClient::ProcessBlockPacket(const uint8_t* packet, uint32 size, bool 
 				return;
 			}
 		}
+		// ehinny fork: walked all pending blocks, no match.
+		g_PromMetrics.IncNoBlockMatch();
 	} catch (const CEOFException& e) {
 		wxString error = wxString("Error reading ");
 		if (packed) error += CFormat("packed (LU: %i) largeblocks ") % lenUnzipped;

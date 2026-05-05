@@ -36,6 +36,7 @@
 #include "Preferences.h"		// Needed for thePrefs
 #include "ScopedPtr.h"			// Needed for CScopedPtr and CScopedArray
 #include "PlatformSpecific.h"		// Needed for CanFSHandleSpecialChars
+#include "PromMetrics.h"
 #include "config.h"
 
 //! This hash represents the value for an empty MD4 hashing
@@ -77,8 +78,24 @@ CHashingTask::CHashingTask(const CKnownFile* toAICHHash)
 }
 
 
+namespace {
+struct HashTaskGuard {
+	bool ok;
+	HashTaskGuard() : ok(false) {
+		g_PromMetrics.IncHashTaskStarted();
+		g_PromMetrics.IncActiveHashTasks();
+	}
+	~HashTaskGuard() {
+		g_PromMetrics.DecActiveHashTasks();
+		if (ok) g_PromMetrics.IncHashTaskCompleted();
+		else    g_PromMetrics.IncHashTaskFailed();
+	}
+};
+}
+
 void CHashingTask::Entry()
 {
+	HashTaskGuard _hashGuard;
 	CFileAutoClose file;
 
 	CPath fullPath = m_path.JoinPaths(m_filename);
@@ -202,6 +219,11 @@ void CHashingTask::Entry()
 		CHashingEvent evt(MULE_EVT_HASHING, knownfile.release(), m_owner);
 
 		wxQueueEvent(wxTheApp, (evt).Clone());
+	}
+
+	if (!TestDestroy()) {
+		g_PromMetrics.AddHashedBytes(fileLength);
+		_hashGuard.ok = true;
 	}
 }
 

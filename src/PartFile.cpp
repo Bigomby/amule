@@ -76,6 +76,7 @@
 #include "ScopedPtr.h"		// Needed for CScopedArray
 #include "CorruptionBlackBox.h"
 
+#include "PromMetrics.h"
 #include "kademlia/kademlia/Kademlia.h"
 #include "kademlia/kademlia/Search.h"
 
@@ -1436,10 +1437,14 @@ uint32 CPartFile::Process(uint8 m_icounter)
 	// Flush on buffer-full, time-limit, or pending hash drain.
 	// HasPendingHashWork() bypass drains Phase 3 at Process()-tick
 	// rate (~100 ms) instead of every 60 s when the file is idle.
-	if (	(m_nTotalBufferData > thePrefs::GetFileBufferSize()) ||
-		(dwCurTick > (m_nLastBufferFlushTime + BUFFER_TIME_LIMIT)) ||
-		HasPendingHashWork()) {
-		FlushBuffer();
+	{
+		const bool sizeTrigger = (m_nTotalBufferData > thePrefs::GetFileBufferSize());
+		const bool timeTrigger = (dwCurTick > (m_nLastBufferFlushTime + BUFFER_TIME_LIMIT));
+		if (sizeTrigger || timeTrigger || HasPendingHashWork()) {
+			if (sizeTrigger) g_PromMetrics.IncFlushBufferSizeBased();
+			else if (timeTrigger) g_PromMetrics.IncFlushBufferTimeBased();
+			FlushBuffer();
+		}
 	}
 
 
@@ -2973,6 +2978,8 @@ int CPartFile::GetCommonFilePenalty()
 // look at the lenData below.
 uint32 CPartFile::WriteToBuffer(uint32 transize, uint8_t* data, uint64 start, uint64 end, Requested_Block_Struct *block, const CUpDownClient* client)
 {
+	g_PromMetrics.IncWriteToBufferCalls();
+
 	// Increment transferred bytes counter for this file
 	transferred += transize;
 
@@ -3065,6 +3072,8 @@ uint32 CPartFile::WriteToBuffer(uint32 transize, uint8_t* data, uint64 start, ui
 
 void CPartFile::FlushBuffer(bool fromAICHRecoveryDataAvailable)
 {
+	g_PromMetrics.IncFlushBuffer();
+	ScopedHistTimer flushTimer(&CPromMetrics::ObserveFlushBufferDuration);
 	m_nLastBufferFlushTime = GetTickCount();
 
 	uint32 partCount = GetPartCount();

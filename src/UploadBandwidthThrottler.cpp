@@ -37,6 +37,8 @@
 #include "Statistics.h"
 #include "amule.h"
 #include "UploadDiskIOThread.h"
+#include "PromMetrics.h"
+#include <chrono>
 
 
 /////////////////////////////////////
@@ -75,7 +77,7 @@ UploadBandwidthThrottler::~UploadBandwidthThrottler()
  */
 void UploadBandwidthThrottler::NewUploadDataAvailable()
 {
-	wxMutexLocker lock( m_newDataMutex );
+	MutexLockTimer lock("upload_throttler_newdata", m_newDataMutex);
 	m_newDataCondition.Signal();
 }
 
@@ -88,7 +90,7 @@ void UploadBandwidthThrottler::NewUploadDataAvailable()
  */
 uint64 UploadBandwidthThrottler::GetNumberOfSentBytesSinceLastCallAndReset()
 {
-	wxMutexLocker lock( m_sendLocker );
+	MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 	uint64 numberOfSentBytesSinceLastCall = m_SentBytesSinceLastCall;
 	m_SentBytesSinceLastCall = 0;
@@ -104,7 +106,7 @@ uint64 UploadBandwidthThrottler::GetNumberOfSentBytesSinceLastCallAndReset()
  */
 uint64 UploadBandwidthThrottler::GetNumberOfSentBytesOverheadSinceLastCallAndReset()
 {
-	wxMutexLocker lock( m_sendLocker );
+	MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 	uint64 numberOfSentBytesSinceLastCall = m_SentBytesSinceLastCallOverhead;
 	m_SentBytesSinceLastCallOverhead = 0;
@@ -132,7 +134,7 @@ uint64 UploadBandwidthThrottler::GetNumberOfSentBytesOverheadSinceLastCallAndRes
 void UploadBandwidthThrottler::AddToStandardList(uint32 index, ThrottledFileSocket* socket)
 {
 	if ( socket ) {
-		wxMutexLocker lock( m_sendLocker );
+		MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 		RemoveFromStandardListNoLock(socket);
 		if (index > (uint32)m_StandardOrder_list.size()) {
@@ -155,7 +157,7 @@ void UploadBandwidthThrottler::AddToStandardList(uint32 index, ThrottledFileSock
  */
 bool UploadBandwidthThrottler::RemoveFromStandardList(ThrottledFileSocket* socket)
 {
-	wxMutexLocker lock( m_sendLocker );
+	MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 	return RemoveFromStandardListNoLock(socket);
 }
@@ -193,7 +195,7 @@ void UploadBandwidthThrottler::QueueForSendingControlPacket(ThrottledControlSock
 	bool wasEmpty = false;
 	{
 		// Get critical section
-		wxMutexLocker lock( m_tempQueueLocker );
+		MutexLockTimer lock("upload_throttler_temp", m_tempQueueLocker);
 
 		if ( m_doRun ) {
 			wasEmpty = m_TempControlQueue_list.empty() && m_TempControlQueueFirst_list.empty();
@@ -224,7 +226,7 @@ void UploadBandwidthThrottler::QueueForSendingControlPacket(ThrottledControlSock
 	// socket; this closes the equivalent gap for the control-packet
 	// path.
 	if (wasEmpty) {
-		wxMutexLocker lock( m_newDataMutex );
+		MutexLockTimer lock("upload_throttler_newdata", m_newDataMutex);
 		m_newDataCondition.Signal();
 	}
 }
@@ -245,7 +247,7 @@ void UploadBandwidthThrottler::DoRemoveFromAllQueues(ThrottledControlSocket* soc
 		EraseValue( m_ControlQueue_list, socket );
 		EraseValue( m_ControlQueueFirst_list, socket );
 
-		wxMutexLocker lock( m_tempQueueLocker );
+		MutexLockTimer lock("upload_throttler_temp", m_tempQueueLocker);
 		EraseValue( m_TempControlQueue_list, socket );
 		EraseValue( m_TempControlQueueFirst_list, socket );
 	}
@@ -254,7 +256,7 @@ void UploadBandwidthThrottler::DoRemoveFromAllQueues(ThrottledControlSocket* soc
 
 void UploadBandwidthThrottler::RemoveFromAllQueues(ThrottledControlSocket* socket)
 {
-	wxMutexLocker lock( m_sendLocker );
+	MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 	DoRemoveFromAllQueues( socket );
 }
@@ -262,7 +264,7 @@ void UploadBandwidthThrottler::RemoveFromAllQueues(ThrottledControlSocket* socke
 
 void UploadBandwidthThrottler::RemoveFromAllQueues(ThrottledFileSocket* socket)
 {
-	wxMutexLocker lock( m_sendLocker );
+	MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 	if (m_doRun) {
 		DoRemoveFromAllQueues(socket);
@@ -282,7 +284,7 @@ void UploadBandwidthThrottler::EndThread()
 {
 	if (m_doRun) {	// do it only once
 		{
-			wxMutexLocker lock(m_sendLocker);
+			MutexLockTimer lock("upload_throttler_send", m_sendLocker);
 
 			// signal the thread to stop looping and exit.
 			m_doRun = false;
@@ -314,7 +316,10 @@ void* UploadBandwidthThrottler::Entry()
 	uint32 rememberedSlotCounter = 0;
 	uint32 extraSleepTime = TIME_BETWEEN_UPLOAD_LOOPS;
 
+	using clk = std::chrono::steady_clock;
 	while (m_doRun && !TestDestroy()) {
+		const auto tIter0 = clk::now();
+		g_PromMetrics.IncThreadIteration(CPromMetrics::kThreadUploadThr);
 		uint32 timeSinceLastLoop = GetTickCountFullRes() - lastLoopTick;
 
 		// Calculate data rate
@@ -348,8 +353,12 @@ void* UploadBandwidthThrottler::Entry()
 		if (timeSinceLastLoop < sleepTime) {
 			// eMule ref: UploadBandwidthThrottler.cpp:580 — WaitForSingleObject replaced with wxCondition::WaitTimeout
 			// Wakes early if disk I/O thread signals NewUploadDataAvailable()
-			wxMutexLocker lock( m_newDataMutex );
+			MutexLockTimer lock("upload_throttler_newdata", m_newDataMutex);
+			const auto tIdle0 = clk::now();
 			m_newDataCondition.WaitTimeout(sleepTime - timeSinceLastLoop);
+			const uint64_t idleMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+				clk::now() - tIdle0).count();
+			g_PromMetrics.AddThreadIdleMicros(CPromMetrics::kThreadUploadThr, idleMicros);
 		}
 
 		// Check after sleep in case the thread has been signaled to end
@@ -382,10 +391,10 @@ void* UploadBandwidthThrottler::Entry()
 			sint32 spentBytes = 0;
 			sint32 spentOverhead = 0;
 
-			wxMutexLocker sendLock(m_sendLocker);
+			MutexLockTimer sendLock("upload_throttler_send", m_sendLocker);
 
 			{
-				wxMutexLocker queueLock(m_tempQueueLocker);
+				MutexLockTimer queueLock("upload_throttler_temp", m_tempQueueLocker);
 
 				// are there any sockets in m_TempControlQueue_list? Move them to normal m_ControlQueue_list;
 				m_ControlQueueFirst_list.insert(	m_ControlQueueFirst_list.end(),
@@ -496,15 +505,18 @@ void* UploadBandwidthThrottler::Entry()
 				}
 			}
 		}
+		const uint64_t busyMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+			clk::now() - tIter0).count();
+		g_PromMetrics.AddThreadBusyMicros(CPromMetrics::kThreadUploadThr, busyMicros);
 	}
 
 	{
-		wxMutexLocker queueLock(m_tempQueueLocker);
+		MutexLockTimer queueLock("upload_throttler_temp", m_tempQueueLocker);
 		m_TempControlQueue_list.clear();
 		m_TempControlQueueFirst_list.clear();
 	}
 
-	wxMutexLocker sendLock(m_sendLocker);
+	MutexLockTimer sendLock("upload_throttler_send", m_sendLocker);
 	m_ControlQueue_list.clear();
 	m_StandardOrder_list.clear();
 

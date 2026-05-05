@@ -287,6 +287,9 @@ public:
 
 	const CGapList& GetGapList() const { return m_gaplist; }
 
+	uint32 GetBufferedDataSize() const  { return m_nTotalBufferData; }
+	size_t GetBufferedDataCount() const { return m_BufferedData_list.size(); }
+
 	/**
 	 * Adds a source to the list of dead sources.
 	 *

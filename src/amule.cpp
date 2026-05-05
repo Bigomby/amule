@@ -62,6 +62,7 @@
 #include "ClientList.h"			// Needed for CClientList
 #include "ClientUDPSocket.h"		// Needed for CClientUDPSocket & CMuleUDPSocket
 #include "ExternalConn.h"		// Needed for ExternalConn & MuleConnection
+#include "PromHttpServer.h"		// ehinny fork: /metrics exporter
 #include <common/FileFunctions.h>	// Needed for CDirIterator
 #include "FriendList.h"			// Needed for CFriendList
 #include "HTTPDownload.h"		// Needed for CHTTPDownloadThread
@@ -199,6 +200,7 @@ CamuleApp::CamuleApp()
 	uploadqueue	= NULL;
 	ipfilter	= NULL;
 	ECServerHandler = NULL;
+	PromHttpHandler = NULL;
 	glob_prefs	= NULL;
 	m_statistics	= NULL;
 	uploadBandwidthThrottler = NULL;
@@ -352,6 +354,9 @@ int CamuleApp::OnExit()
 
 	delete ECServerHandler;
 	ECServerHandler = NULL;
+
+	delete PromHttpHandler;
+	PromHttpHandler = NULL;
 
 	delete m_statistics;
 	m_statistics = NULL;
@@ -844,6 +849,12 @@ bool CamuleApp::ReinitializeNetwork(wxString* msg)
 	}
 	myaddr[0].Service(thePrefs::ECPort());
 	ECServerHandler = new ExternalConn(myaddr[0], msg);
+
+	// ehinny fork: bind the Prometheus /metrics listener.
+	PromHttpHandler = new CPromHttpServer();
+	if (!PromHttpHandler->Start(thePrefs::GetPrometheusPort())) {
+		AddLogLineN(wxT("PromHttpServer: failed to bind, exporter disabled."));
+	}
 
 	// Create the UDP socket TCP+3.
 	// Used for source asking on servers.

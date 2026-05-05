@@ -323,6 +323,8 @@ public:
 
 	static uint32		GetFileBufferSize()		{ return s_iFileBufferSize*15000; }
 	static void		SetFileBufferSize(uint32 val)	{ s_iFileBufferSize = val/15000; }
+	// ehinny fork: Prometheus /metrics HTTP listener port. 0 disables.
+	static uint16		GetPrometheusPort()		{ return s_iPrometheusPort; }
 	static uint32		GetQueueSize()			{ return s_iQueueSize*100; }
 	static void		SetQueueSize(uint32 val)	{ s_iQueueSize = val/100; }
 
@@ -709,6 +711,8 @@ protected:
 
 	static uint8	s_iFileBufferSize;
 	static uint8	s_iQueueSize;
+	// ehinny fork
+	static uint16	s_iPrometheusPort;
 
 	static wxString	s_datetimeformat;
 

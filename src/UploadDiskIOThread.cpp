@@ -40,6 +40,8 @@
 #include "ScopedPtr.h"			// Needed for CScopedArray
 #include "UploadBandwidthThrottler.h"
 #include "Statistics.h"			// Needed for theStats
+#include "PromMetrics.h"			// ehinny fork: metrics hooks
+#include <chrono>
 
 #include <protocol/Protocols.h>
 #include <protocol/ed2k/Client2Client/TCP.h>
@@ -62,7 +64,7 @@ CUploadDiskIOThread::CUploadDiskIOThread()
 	m_bNewBlocksPending = false;
 	m_bSocketNeedsPending = false;
 
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("upload_disk_io_thread", m_mutex);
 	if (Create() == wxTHREAD_NO_ERROR) {
 		Run();
 	}
@@ -78,7 +80,7 @@ CUploadDiskIOThread::~CUploadDiskIOThread()
 void CUploadDiskIOThread::EndThread()
 {
 	{
-		wxMutexLocker lock(m_mutex);
+		MutexLockTimer lock("upload_disk_io_thread", m_mutex);
 		m_bRun = false;
 		m_condition.Signal();
 	}
@@ -93,7 +95,7 @@ void CUploadDiskIOThread::EndThread()
 // pure pulse — it is dropped if no thread is currently waiting.
 void CUploadDiskIOThread::NewBlockRequestsAvailable()
 {
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("upload_disk_io_thread", m_mutex);
 	m_bNewBlocksPending = true;
 	m_condition.Signal();
 }
@@ -103,7 +105,7 @@ void CUploadDiskIOThread::NewBlockRequestsAvailable()
 // Called by throttler when it drains a socket and needs more data.
 void CUploadDiskIOThread::SocketNeedsMoreData()
 {
-	wxMutexLocker lock(m_mutex);
+	MutexLockTimer lock("upload_disk_io_thread", m_mutex);
 	m_bSocketNeedsPending = true;
 	m_condition.Signal();
 }
@@ -116,9 +118,13 @@ void* CUploadDiskIOThread::Entry()
 
 	while (m_bRun)	// eMule ref: line 88
 	{
+		using clk = std::chrono::steady_clock;
+		const auto tBusy0 = clk::now();
+		g_PromMetrics.IncThreadIteration(CPromMetrics::kThreadUploadDisk);
 		// eMule ref: lines 92-109 — reset events, lock upload list, iterate clients
 		{
-			wxMutexLocker uploadLock(theApp->uploadqueue->GetUploadingListLock());
+			MutexLockTimer uploadLock("upload_queue_uploading_list",
+				theApp->uploadqueue->GetUploadingListLock());
 			const CClientRefList& uploadList = theApp->uploadqueue->GetUploadingList();
 
 			for (CClientRefList::const_iterator it = uploadList.begin(); it != uploadList.end(); ++it)
@@ -155,13 +161,24 @@ void* CUploadDiskIOThread::Entry()
 		// m_bSocketNeedsPending) are set under m_mutex by callers, so we check them
 		// before sleeping and skip the wait if a signal arrived since last iteration.
 		// 500ms matches eMule's WaitForMultipleObjects timeout.
+		const uint64_t busyMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+			clk::now() - tBusy0).count();
+		g_PromMetrics.AddThreadBusyMicros(CPromMetrics::kThreadUploadDisk, busyMicros);
+
+		uint64_t idleMicros = 0;
 		{
-			wxMutexLocker lock(m_mutex);
+			MutexLockTimer lock("upload_disk_io_thread", m_mutex);
 			if (m_bRun && !m_bNewBlocksPending && !m_bSocketNeedsPending) {
+				const auto t0 = clk::now();
 				m_condition.WaitTimeout(500);
+				idleMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+					clk::now() - t0).count();
 			}
 			m_bNewBlocksPending = false;
 			m_bSocketNeedsPending = false;
+		}
+		if (idleMicros > 0) {
+			g_PromMetrics.AddThreadIdleMicros(CPromMetrics::kThreadUploadDisk, idleMicros);
 		}
 	}
 
@@ -346,7 +363,8 @@ void CUploadDiskIOThread::ReadCompletionRoutine(ReadRequest_Struct* req)
 	// Hold uploadLock through SendPacket to prevent the socket from being freed
 	// by a concurrent disconnect; matches eMule's design (lock scope to line 482).
 	{
-		wxMutexLocker uploadLock(theApp->uploadqueue->GetUploadingListLock());
+		MutexLockTimer uploadLock("upload_queue_uploading_list",
+			theApp->uploadqueue->GetUploadingListLock());
 		const CClientRefList& uploadList = theApp->uploadqueue->GetUploadingList();
 
 		bool bFound = false;
@@ -496,6 +514,8 @@ void CUploadDiskIOThread::CreateStandardPackets(const uint8_t* buffer, uint64 st
 		delete [] tempbuf;
 		CPacket* packet = new CPacket(data, (bLargeBlocks ? OP_EMULEPROT : OP_EDONKEYPROT), (bLargeBlocks ? (uint8)OP_SENDINGPART_I64 : (uint8)OP_SENDINGPART));
 		theStats::AddUpOverheadFileRequest(16 + 2 * (bLargeBlocks ? 8 : 4));
+		g_PromMetrics.IncSendingPartPackets();
+		g_PromMetrics.IncBytesSent(nPacketSize);
 		packetList.push_back(std::make_pair(packet, nPacketSize));
 	}
 }
@@ -545,6 +565,8 @@ void CUploadDiskIOThread::CreatePackedPackets(const uint8_t* buffer, uint64 star
 		data.Write(tempbuf,nPacketSize);
 		delete [] tempbuf;
 		CPacket* packet = new CPacket(data, OP_EMULEPROT, (isLargeBlock ? OP_COMPRESSEDPART_I64 : OP_COMPRESSEDPART));
+		g_PromMetrics.IncSendingPartPackets();
+		g_PromMetrics.IncBytesSent(nPacketSize);
 
 		// approximate payload size
 		uint32 payloadSize = static_cast<uint32>(
